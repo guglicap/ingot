@@ -1,12 +1,14 @@
 package event
 
+import "context"
+
 type (
 	Event interface {
 		ID() string
 	}
 
 	Handler interface {
-		Emit(Event)
-		Subscribe(string, func(Event))
+		Push(Event)
+		Subscribe(string, func(context.Context, Event))
 	}
 )
