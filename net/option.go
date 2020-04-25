@@ -13,3 +13,9 @@ func WithPort(port int) ServerOption {
 		s.port = port
 	}
 }
+
+func WithPacketHandler(ph PacketHandler) ServerOption {
+	return func(s *Server) {
+		s.packetHandler = ph
+	}
+}

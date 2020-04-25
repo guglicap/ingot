@@ -1,3 +1,4 @@
+// package login implements packet data for the connection state Login
 package login
 
 import (

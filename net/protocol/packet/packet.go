@@ -1,32 +1,37 @@
 package packet
 
 import (
+	"bytes"
 	"github.com/ingotmc/ingot/net/protocol"
 	"github.com/ingotmc/ingot/net/protocol/internal/read"
+	"github.com/ingotmc/ingot/net/protocol/internal/write"
 	"io"
 )
 
+// Data represents packet data.
 type Data interface {
 	Encode(w io.Writer) error
 	Decode(r io.Reader) error
 }
 
+// Packet represents a packet whose Data has been decoded.
 type Packet struct {
-	ID    int64
+	ID    int32
 	State protocol.State
 	Data  Data
 }
 
+// Raw represents a packet whose Data part hasn't been decoded yet.
+// This data is held as a []byte.
 type Raw struct {
-	Length int64
-	ID     int64
-	Data   []byte
+	ID   int32
+	Data []byte
 }
 
+// ReadRaw reads from the Reader r and returns a packet.Raw
 func ReadRaw(r io.Reader) (Raw, error) {
 	p := Raw{}
 	length, _, err := read.VarInt(r)
-	p.Length = length
 	if err != nil {
 		return Raw{}, err
 	}
@@ -42,8 +47,29 @@ func ReadRaw(r io.Reader) (Raw, error) {
 		return Raw{}, err
 	}
 	if l != dataLen {
-		// TODO: return error
+		return p, ErrInvalidDataLength{
+			length:   l,
+			expected: dataLen,
+		}
 	}
 	p.Data = buf
 	return p, nil
+}
+
+func WriteRaw(p Raw, w io.Writer) error {
+	buf := bytes.NewBuffer(make([]byte, 0, 5))
+	n, err := write.VarInt(p.ID, buf)
+	if err != nil {
+		return err
+	}
+	_, err = write.VarInt(int32(n+len(p.Data)), w)
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(buf.Bytes()[:n])
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(p.Data)
+	return err
 }
