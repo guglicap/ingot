@@ -2,6 +2,7 @@ package net
 
 import (
 	"bytes"
+	"github.com/google/uuid"
 	"github.com/ingotmc/ingot/net/protocol"
 	"github.com/ingotmc/ingot/net/protocol/packet"
 	"github.com/ingotmc/ingot/net/protocol/packet/handshake"
@@ -10,16 +11,16 @@ import (
 
 // ConnID represents a connection ID, assigned by the server upon accepting a new connection.
 // Unique for every client.
-type ConnID string
+type ConnID uuid.UUID
 
 // Conn represents an I/O stream with a client, it handles packet encoding/decoding.
 type Conn struct {
 	ID ConnID
 	net.Conn
-	state   protocol.State
-	stopped bool
-	sBound  chan packet.Packet
-	cBound  chan packet.Packet
+	state  protocol.State
+	stop   chan struct{}
+	sBound chan packet.Packet
+	cBound chan packet.Packet
 }
 
 // NewConnection returns a connection with the given ID and using conn as the underlying transport
@@ -27,6 +28,8 @@ func NewConnection(ID ConnID, conn net.Conn) *Conn {
 	c := &Conn{
 		ID:     ID,
 		Conn:   conn,
+		state:  protocol.Handshaking,
+		stop:   make(chan struct{}),
 		sBound: make(chan packet.Packet),
 		cBound: make(chan packet.Packet),
 	}
@@ -34,38 +37,38 @@ func NewConnection(ID ConnID, conn net.Conn) *Conn {
 }
 
 // blocking, reads a raw packet from the wire and decodes it.
-func (c Conn) readPacket() (p packet.Packet, err error) {
-	rp, err := packet.ReadRaw(c)
+func (c Conn) readPacket() (packet.Packet, error) {
+	raw, err := packet.ReadRaw(c)
 	if err != nil {
-		return
+		return packet.Packet{}, err
 	}
-	p.ID = rp.ID
+	var p packet.Packet
+	p.ID = raw.ID
 	p.State = c.state
 	data, err := packet.DataByIDAndState(p.ID, c.state)
 	if err != nil {
-		return
+		return packet.Packet{}, err
 	}
-	err = data.Decode(bytes.NewReader(rp.Data))
+	err = data.Decode(bytes.NewReader(raw.Data))
 	p.Data = data
-	return
+	return p, nil
 }
 
-func (c Conn) writePacket(p packet.Packet) (err error) {
+func (c Conn) writePacket(p packet.Packet) error {
 	rp := packet.Raw{}
 	rp.ID = p.ID
 	buf := bytes.NewBuffer([]byte{})
-	err = p.Data.Encode(buf)
+	err := p.Data.Encode(buf)
 	if err != nil {
-		return
+		return err
 	}
 	rp.Data = buf.Bytes()
 	return packet.WriteRaw(rp, c)
 }
 
-// handlePacket takes care of maintaining the correct state in order to decode
-// upcoming packets correctly. This function is blocking and can't be called asynchronously,
-// so keep it tiny and don't perform long running operations.
-func (c *Conn) handlePacket(p packet.Packet) {
+// updateState takes care of maintaining the correct state in order to decode
+// upcoming packets correctly.
+func (c *Conn) updateState(p packet.Packet) {
 	if p.State == protocol.Handshaking && p.ID == handshake.SetProtocolID {
 		c.state = protocol.Login
 	}
@@ -73,16 +76,20 @@ func (c *Conn) handlePacket(p packet.Packet) {
 
 // receive forwards decoded packets into the sBound channel.
 func (c Conn) receive() {
-	var err error
-	for !c.stopped {
-		var p packet.Packet
-		p, err = c.readPacket()
-		if err != nil {
-			// TODO: logging
-			continue
+loop:
+	for {
+		select {
+		case <-c.stop:
+			break loop
+		default:
+			p, err := c.readPacket()
+			if err != nil {
+				// TODO: logging
+				continue
+			}
+			c.updateState(p)
+			c.sBound <- p
 		}
-		c.handlePacket(p)
-		c.sBound <- p
 	}
 	close(c.sBound)
 }
@@ -94,6 +101,7 @@ func (c Conn) send() {
 			// TODO: logging
 			continue
 		}
+		c.updateState(p)
 	}
 }
 
@@ -104,6 +112,6 @@ func (c Conn) Start() {
 }
 
 func (c *Conn) Close() error {
-	c.stopped = true
+	c.stop <- struct{}{}
 	return c.Conn.Close()
 }

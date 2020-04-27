@@ -14,14 +14,14 @@ type Data interface {
 	Decode(r io.Reader) error
 }
 
-// Packet represents a packet whose Data has been decoded.
+// Packet represents a packet whose Data has been decoded / is ready to be encoded.
 type Packet struct {
 	ID    int32
 	State protocol.State
 	Data  Data
 }
 
-// Raw represents a packet whose Data part hasn't been decoded yet.
+// Raw represents a packet on the wire, without the length metadata.
 // This data is held as a []byte.
 type Raw struct {
 	ID   int32
@@ -56,6 +56,8 @@ func ReadRaw(r io.Reader) (Raw, error) {
 	return p, nil
 }
 
+// WriteRaw writes a Raw packet to the wire and returns in error
+// if the encoding cannot take place successfully.
 func WriteRaw(p Raw, w io.Writer) error {
 	buf := bytes.NewBuffer(make([]byte, 0, 5))
 	n, err := write.VarInt(p.ID, buf)

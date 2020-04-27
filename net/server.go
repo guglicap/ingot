@@ -71,15 +71,13 @@ func (s *Server) Listen() error {
 }
 
 func (s *Server) handleConn(c net.Conn) {
-	id := ConnID(uuid.New().String())
+	id := ConnID(uuid.New())
 	conn := NewConnection(id, c)
 	s.clients[conn.ID] = conn
 	conn.Start()
-	go func(conn *Conn) {
-		for p := range conn.sBound {
-			s.packetHandler.HandlePacket(conn, p)
-		}
-	}(conn)
+	for p := range conn.cBound {
+		s.packetHandler.HandlePacket(conn, p)
+	}
 }
 
 // Shutdown will stop the server.
