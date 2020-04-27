@@ -8,23 +8,35 @@ import (
 	"io"
 )
 
-// Data represents packet data.
-type Data interface {
-	Encode(w io.Writer) error
-	Decode(r io.Reader) error
+type sBoundData interface{ Decode(r io.Reader) error }
+
+// PacketID represent the ID field of a packet.
+type ID int32
+
+// Info represents the combination of ID + State which uniquely identifies a packet, given its direction
+type Info struct {
+	ID
+	protocol.State
 }
 
-// Packet represents a packet whose Data has been decoded / is ready to be encoded.
-type Packet struct {
-	ID    int32
-	State protocol.State
-	Data  Data
+// Serverbound represents a packet sent by the client to the server.
+type Serverbound struct {
+	Info
+	Data sBoundData
+}
+
+type cBoundData interface{ Encode(w io.Writer) error }
+
+// Clientbound represents a packet sent by the server to the client.
+type Clientbound struct {
+	ID   ID // we don't use Info here because State isn't needed to encode a packet.
+	Data cBoundData
 }
 
 // Raw represents a packet on the wire, without the length metadata.
 // This data is held as a []byte.
 type Raw struct {
-	ID   int32
+	ID   ID
 	Data []byte
 }
 
@@ -39,7 +51,7 @@ func ReadRaw(r io.Reader) (Raw, error) {
 	if err != nil {
 		return Raw{}, err
 	}
-	p.ID = id
+	p.ID = ID(id)
 	dataLen := int(length) - n
 	buf := make([]byte, dataLen)
 	l, err := io.ReadFull(r, buf)
@@ -60,7 +72,7 @@ func ReadRaw(r io.Reader) (Raw, error) {
 // if the encoding cannot take place successfully.
 func WriteRaw(p Raw, w io.Writer) error {
 	buf := bytes.NewBuffer(make([]byte, 0, 5))
-	n, err := write.VarInt(p.ID, buf)
+	n, err := write.VarInt(int32(p.ID), buf)
 	if err != nil {
 		return err
 	}

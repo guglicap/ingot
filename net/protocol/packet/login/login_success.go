@@ -18,7 +18,3 @@ func (l LoginSuccess) Encode(w io.Writer) error {
 	err = write.String(l.Name, w)
 	return err
 }
-
-func (l LoginSuccess) Decode(r io.Reader) error {
-	return nil
-}

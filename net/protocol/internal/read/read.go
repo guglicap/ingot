@@ -5,6 +5,7 @@ package read
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 )
 
@@ -123,7 +124,7 @@ func String(r io.Reader) (string, error) {
 		return "", err
 	}
 	if n != int(length) {
-		// TODO: logging
+		return "", fmt.Errorf("invalid string length: wanted %d, got %d", length, n)
 	}
 	return string(buf), nil
 }

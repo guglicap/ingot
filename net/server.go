@@ -6,6 +6,7 @@ import (
 	"github.com/ingotmc/ingot/net/protocol"
 	"github.com/ingotmc/ingot/net/protocol/packet"
 	"github.com/ingotmc/ingot/net/protocol/packet/login"
+	"go.uber.org/zap"
 	"net"
 )
 
@@ -16,7 +17,7 @@ const (
 
 // PacketHandler represents the ability to handle a Packet p coming from a Conn c
 type PacketHandler interface {
-	HandlePacket(c *Conn, p packet.Packet)
+	HandlePacket(c *Conn, p packet.Serverbound)
 }
 
 // Server listens on a given address and port, defaulting to "localhost:25565"
@@ -28,6 +29,7 @@ type Server struct {
 	addr          string
 	port          int
 	l             net.Listener
+	log           *zap.SugaredLogger
 	shutdown      bool
 	clients       map[ConnID]*Conn
 	packetHandler PacketHandler
@@ -38,6 +40,7 @@ func NewServer(opts ...ServerOption) (*Server, error) {
 	s := &Server{
 		addr:    defaultAddr,
 		port:    defaultPort,
+		log:     zap.S().Named("net/server"),
 		clients: make(map[ConnID]*Conn),
 	}
 	s.packetHandler = s
@@ -57,7 +60,7 @@ func (s *Server) Listen() error {
 	}
 	s.l = l
 	for {
-		var c net.Conn
+		var c net.Conn // needed not to shadow err
 		c, err = s.l.Accept()
 		if err != nil {
 			break
@@ -70,38 +73,48 @@ func (s *Server) Listen() error {
 	return err
 }
 
-func (s *Server) handleConn(c net.Conn) {
-	id := ConnID(uuid.New())
-	conn := NewConnection(id, c)
-	s.clients[conn.ID] = conn
-	conn.Start()
-	for p := range conn.cBound {
-		s.packetHandler.HandlePacket(conn, p)
-	}
-}
-
 // Shutdown will stop the server.
 func (s *Server) Shutdown() {
 	s.shutdown = true
-	for k, c := range s.clients {
-		err := c.Close()
-		close(c.cBound)
-		if err != nil {
-			// TODO: logging
-		}
-		delete(s.clients, k)
+	s.log.Info("shutting down...")
+	for _, c := range s.clients {
+		c.Close()
 	}
 	err := s.l.Close()
 	if err != nil {
-		// TODO: logging
+		s.log.Error("error closing listener", err)
 	}
 }
 
-func (s *Server) HandlePacket(c *Conn, p packet.Packet) {
+func (s *Server) HandlePacket(c *Conn, p packet.Serverbound) {
 	if p.ID == login.LoginStartID && p.State == protocol.Login {
 		l := new(login.LoginSuccess)
 		l.Name = "guglicap"
 		l.UUID = "11111111-2222-3333-4444-555555555555"
-		c.cBound <- packet.Packet{State: protocol.Login, ID: 0x02, Data: l}
+		c.cBound <- packet.Clientbound{ID: 0x02, Data: l}
 	}
+}
+
+func (s *Server) handleConn(c net.Conn) {
+	id := ConnID(uuid.New())
+	conn := NewConnection(id, c)
+	s.log.Debugw("new connection", "id", id.String())
+	s.clients[conn.ID] = conn
+	go conn.Start()
+	for p := range conn.sBound {
+		s.packetHandler.HandlePacket(conn, p)
+	}
+	s.removeConnection(conn)
+}
+
+// removeConnection removes a connection c from the server.
+// calling removeConnection with an already closed connection is a noop.
+func (s *Server) removeConnection(c *Conn) {
+	if _, ok := s.clients[c.ID]; !ok {
+		s.log.Debug("called removeConnection on an already closed connection", c.ID.String())
+		return
+	}
+	close(c.cBound)
+	delete(s.clients, c.ID)
+	s.log.Debugw("client disconnected", "id", c.ID.String())
 }

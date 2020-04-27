@@ -15,10 +15,6 @@ type SetProtocol struct {
 	NextState       int32
 }
 
-func (s SetProtocol) Encode(w io.Writer) error {
-	return nil
-}
-
 func (s *SetProtocol) Decode(r io.Reader) (err error) {
 	s.ProtocolVersion, _, err = read.VarInt(r)
 	if err != nil {
